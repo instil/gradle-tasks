@@ -1,0 +1,123 @@
+/*
+The MIT License (MIT)
+Copyright (c) 2017 - Instil
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+*/
+
+buildscript {
+    repositories {
+        mavenCentral()
+        jcenter()
+    }
+    dependencies {
+        classpath 'org.flywaydb:flyway-core:3.2.1'
+        classpath 'org.jooq:jooq-codegen:3.7.2'
+        classpath 'org.postgresql:postgresql:9.4-1204-jdbc42'
+        classpath 'org.yaml:snakeyaml:1.16'
+    }
+    ext {
+        postgisExclusions = ['ST_.*',
+                             '_st_.*',
+                             '.*geo.*_?.*',
+                             'gserialized_.*',
+                             '_?postgis.*',
+                             'raster_.*',
+                             'pgis_.*',
+                             '(un)?lockrows?',
+                             'box.*',
+                             'bytea',
+                             'checkauth',
+                             'path',
+                             'point',
+                             'polygon',
+                             'addauth',
+                             '.*_srid',
+                             'spheroid_.*',
+                             'gidx_.*',
+                             'text']
+    }
+}
+
+task generateJooqSchemaSource(description: "Generated JOOQ classes.") {
+    inputs.dir(file('src/main/resources/db/migration'))
+    outputs.dir(file('src/generated'))
+
+    doLast() {
+        File configFile = new File('config/build.yaml')
+        def config = new org.yaml.snakeyaml.Yaml().load(configFile.newReader());
+        generateJooqCodeAgainst(config.url, config.username, config.password, config.inputSchema, config.outputSchema)
+    }
+}
+compileJava.dependsOn generateJooqSchemaSource
+
+def void generateJooqCodeAgainst(jdbcUrl, dbUsername, dbPassword, dbInputSchema, dbOutputSchema) {
+
+    delete 'src/generated/java/org/jooq/code'
+
+
+    org.flywaydb.core.Flyway flyway = new org.flywaydb.core.Flyway()
+    flyway.setDataSource(jdbcUrl, dbUsername, dbPassword)
+    flyway.setSchemas(dbInputSchema)
+    flyway.setLocations("filesystem:src/main/resources/db/migration")
+    flyway.clean();
+    flyway.migrate();
+
+    def writer = new StringWriter()
+    new groovy.xml.MarkupBuilder(writer).configuration('xmlns': 'http://www.jooq.org/xsd/jooq-codegen-3.7.0.xsd') {
+        jdbc() {
+            driver('org.postgresql.Driver')
+            url(jdbcUrl)
+            user(dbUsername)
+            password(dbPassword)
+        }
+        generator() {
+            database() {
+                name('org.jooq.util.postgres.PostgresDatabase')
+                inputSchema(dbInputSchema)
+                outputSchmea(dbOutputSchema)
+                excludes(postgisExclusions.join('|'))
+            }
+            generate() {
+                daos(true)
+            }
+            target() {
+                packageName('org.jooq.code')
+                directory('src/generated/java')
+            }
+        }
+    }
+
+    org.jooq.util.GenerationTool.main(
+            javax.xml.bind.JAXB.unmarshal(new StringReader(writer.toString()), org.jooq.util.jaxb.Configuration.class)
+    )
+}
+
+task cleanJooq() << {
+    delete 'src/generated/java/org/jooq/code'
+}
+clean.dependsOn cleanJooq
+
+repositories {
+    mavenCentral()
+    jcenter()
+}
+
+dependencies {
+    compile 'org.flywaydb:flyway-core:3.2.1'
+    compile 'org.postgresql:postgresql:9.4-1204-jdbc41'
+    compile 'org.jooq:jooq-codegen:3.7.2'
+    compile 'org.jooq:jooq-meta:3.7.2'
+    compile 'org.modelmapper.extensions:modelmapper-jooq:0.7.5'
+}
+
+tasks.idea.dependsOn(generateJooqSchemaSource)
+
+sourceSets {
+    sourceSets.main.java.srcDirs = ['src/main/java', 'src/generated/java']
+}
+
