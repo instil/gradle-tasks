@@ -1,6 +1,6 @@
 /*
 The MIT License (MIT)
-Copyright (c) 2017 - Instil 
+Copyright (c) 2017 - Instil
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
@@ -9,26 +9,46 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-task launchPostgresContainer(type:Exec) {
-    commandLine 'docker', 'run', '--name', 'jooq-pgsql-schema-gen', '-e', 'POSTGRES_USER=jooq', '-e', 'POSTGRES_PASSWORD=password', '-e', 'POSTGRES_DB=jooq_schema_generator', '-d', '-p', '5433:5432', 'postgres:9.6'
-}
+def launchPostgresContainer() {
+    cleanupPostgresContainer()
 
-launchPostgresContainer.doLast {
+    // TODO: Use random port assignment to avoid conflicts.
+    exec {
+        commandLine 'docker', 'run',
+                '--name', 'jooq-pgsql-schema-gen',
+                '-e', 'POSTGRES_USER=jooq',
+                '-e', 'POSTGRES_PASSWORD=password',
+                '-e', 'POSTGRES_DB=jooq_schema_generator',
+                '-d',
+                '-p', '5433:5432',
+                'postgres:9.6'
+    }
+
     println("Waiting for Postgres Docker container to launch...")
     sleep(5000)
 }
-generateJooqSchemaSource.dependsOn launchPostgresContainer
 
-task stopPostgresContainer(type:Exec) {
+def cleanupPostgresContainer() {
     println("Stopping Postgres Docker container")
-    commandLine 'docker', 'stop', 'jooq-pgsql-schema-gen'
-    sleep(5000)
-}
+    exec {
+        commandLine 'docker', 'stop', '-t', '5000', 'jooq-pgsql-schema-gen'
 
-task cleanupPostgresContainer(type:Exec) {
+        // Required to avoid build failures when no container is running.
+        ignoreExitValue = true
+    }
+
     println("Removing Postgres Docker container")
-    commandLine 'docker', 'rm', 'jooq-pgsql-schema-gen'
-}
-cleanupPostgresContainer.dependsOn stopPostgresContainer
-launchPostgresContainer.dependsOn cleanupPostgresContainer
+    exec {
+        commandLine 'docker', 'rm', 'jooq-pgsql-schema-gen'
 
+        // Required to avoid build failures when container is not found.
+        ignoreExitValue = true
+    }
+}
+
+generateJooqSchemaSource.doFirst {
+    launchPostgresContainer()
+}
+generateJooqSchemaSource.doLast {
+    cleanupPostgresContainer()
+}
